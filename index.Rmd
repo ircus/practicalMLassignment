@@ -1,0 +1,102 @@
+---
+title: "Weight Lifting Exercises"
+author: "ircus"
+date: "February 14, 2016"
+output: html_document
+---
+
+The goal of this analysis is to predict the manner in which the participants did the Unilateral Dumbbell Biceps Curl.
+
+Six young health participants were asked to perform one set of 10 repetitions of the exercise in five different fashions:
+
+* exactly according to the specification (Class A),
+* throwing the elbows to the front (Class B),
+* lifting the dumbbell only halfway (Class C),
+* lowering the dumbbell only halfway (Class D),
+* and throwing the hips to the front (Class E).
+
+The raw data to predict the quality class was collected using an on-body sensing approach. Spatial data from four sensors was recorded during the excercise: Belt, Arm, Forearm, Dumbbell.
+
+```{r, echo=FALSE, message=FALSE}
+#rm(list=ls())
+library(caret)
+library(RRF)
+dt = read.csv("C:/Users/irina_filitovich/Downloads/pml-training.csv", stringsAsFactors = FALSE, na.strings = c("NA", ""), row.names = 1)
+incl = names(dt)[colSums(is.na(dt))/nrow(dt)<.9]
+incl = setdiff(incl, names(dt)[1:6])
+dt=dt[incl]
+dt$classe=as.factor(dt$classe)
+```
+
+I loaded the dataset into a __dt__ data frame and removed all additional summary statistics variables, as I would like to base my prediction purely on the raw spatial data, I also removed the time variables and names, because I am not going to apply time modelling techniques, and the model I will obtain must not depend on the person who performed the task.
+
+Since we are not limited in data at all and there are no computation time requirements, it would be a good idea to go with an algorithm that is time-consuming and requires a lot of data, but gives high accuracy in return.
+
+One of the best choises in this case is the __Random Forests__ model. Additionally I would like to use the regularization technique to limit down the number of predictors that will remain in the model to simplify it and avoid overfitting. Therefore, the model I will fit is __Regularized Random Forests__ from the _RRF_ package.
+
+Moreover, to estimate the out of sample error I will use __Cross-Validation__ on 10 folds created by means of the _caret_ package, and as my best fitted model select the one that produced the highest accuracy on its fold's testing portion.
+
+```{r, echo=FALSE, message=FALSE}
+bestAcc = 0
+accSum = 0
+```
+
+```{r, message=FALSE}
+set.seed(123)
+folds = createFolds(dt$classe, k = 10)
+
+for (i in 1:length(folds)) {
+  train=dt[-folds[[i]],]
+  test=dt[folds[[i]],]
+  
+  fit = RRF(x=train[-53],
+            y=train$classe,
+            ntree = 10,
+            replace = FALSE)
+  pred=predict(fit, test)
+  
+  acc = confusionMatrix(pred, test$classe)$overall[1]
+  accSum = accSum + acc
+  if (acc>bestAcc) {
+    bestFit = fit
+    bestAcc = acc
+  }
+}
+
+```
+
+The described process obtains the following measures:
+
+```{r, echo=FALSE, message=FALSE}
+outSmplAccEst = accSum/length(folds)
+outSmplErrEst = 1 - outSmplAccEst
+names(outSmplErrEst) = "OutOfSampleError"
+names(outSmplAccEst) = "OutOfSampleAccuracy"
+names(bestAcc) = "BestFitAccuracy"
+c(outSmplErrEst, outSmplAccEst, bestAcc)
+```
+
+And the __`r length(bestFit$feaSet)`__ features that got selected during training are as follows, ordered by importance according to the mean decrease in Gini coefficient, which is a measure of how each variable contributes to the resulting random forest.
+
+```{r, message=FALSE}
+featSetImp = cbind("MeanDecreaseGini"=sort(bestFit$importance[bestFit$importance[,1]!=0,], decreasing = TRUE))
+print(featSetImp)
+```
+
+Let's see how do the two most important features correspond to each other:
+
+```{r, message=FALSE}
+library(ggplot2)
+qplot(yaw_belt, roll_belt, data=dt, col=classe)
+```
+
+Now I will load the test set in a __cases__ data frame and predict the classes of the sample there.
+
+```{r, echo=FALSE, message=FALSE}
+cases = read.csv("C:/Users/irina_filitovich/Downloads/pml-testing.csv", stringsAsFactors = FALSE, na.strings = c("NA", ""), row.names = 1)
+cases = cases[setdiff(incl, "classe")]
+```
+
+```{r, message=FALSE}
+predict(bestFit, cases)
+```
